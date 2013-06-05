@@ -1,0 +1,183 @@
+#!/usr/bin/env python
+
+import gtk
+import sys
+import os
+import time
+import threading
+import glib
+import gobject
+
+bcolor = None
+bimg = None
+can_follow_size = False
+
+def follow_screen_size(win,sc):
+    w = 2
+    h = 2
+    win.resize(w,h)
+
+def on_screen_size_changed(sc,win):
+    follow_screen_size(win,sc)
+
+def getconf(key):
+    import ConfigParser
+    conf='@GREETER_CONF_FILE@'
+    config = ConfigParser.RawConfigParser()
+    config.read(conf)
+    try:
+        return config.get('greeter',key)
+    except:
+        return None
+
+def gtksettings_config():
+    global bcolor
+    global bimg
+    gs = gtk.settings_get_default()
+    tname = getconf('theme-name')
+    if tname:
+        gs.set_property("gtk-theme-name",tname)
+    cname = getconf("cursor-theme-name")
+    if cname:
+        gs.set_property("gtk-cursor-theme-name",cname)
+    else:
+        gs.set_property("gtk-cursor-theme-name",'startos')
+    bimg,bcolor = get_background()
+
+def get_background():
+    bstr = getconf('background')
+    bdir='@GREETER_DATA_DIR@'
+    color = gtk.gdk.color_parse('#FFFFFF')
+    img = None
+    if bstr[0] == '#':
+        color = gtk.gdk.color_parse(bstr)
+    else:
+        img = gtk.gdk.pixbuf_new_from_file(os.path.join(bdir,bstr))
+    return (img,color)
+
+def draw_background(widget):
+    global bcolor
+    global bimg
+    if widget.window:
+        cr = widget.window.cairo_create()
+        if bimg:
+            cr.set_source_pixbuf(bimg,0,0)
+            alc = widget.get_allocation()
+            w = bimg.get_width()
+            h = bimg.get_height()
+#            print w,h,alc
+            cr.scale(alc.width*1.0/w,alc.height*1.0/h)
+        else:
+            cr.set_source_color(bcolor)
+        cr.paint()
+
+def shape_combine_region(widget):
+    if widget.window:
+        region = None
+        if not can_follow_size:
+            region = gtk.gdk.region_rectangle((0,0,2,2))
+        widget.window.shape_combine_region(region,0,0)
+
+def on_expose_event(widget,event):
+    draw_background(widget)
+    return False;
+
+def on_size_allocate(widget,alc):
+    shape_combine_region(widget)
+
+def on_screen_changed(widget,oldsc):
+    sc = widget.get_screen()
+    if sc != oldsc:
+        follow_screen_size(widget,sc)
+        sc.connect("size-changed",on_screen_size_changed,widget)
+    gtk.gdk.get_default_root_window().set_cursor(gtk.gdk.Cursor(gtk.gdk.LEFT_PTR))
+    widget.set_keep_below(True)
+
+def wait_process():
+    pid = sys.argv[1]
+    path = '/proc/' + pid +'/exe'
+    while os.path.exists(path):
+        time.sleep(0.1)
+
+def find_process(cmd):
+    for d in os.listdir('/proc'):
+        exepath = '/proc/' + d+'/exe'
+        if os.path.exists(exepath):
+            basename = ""
+            try:
+                basename = os.path.basename(os.readlink(exepath))
+            except:pass
+            if cmd in basename:
+                return True
+    return False
+
+def on_idle_exit(d):
+    try:
+        gtk.main_quit()
+    except:
+        sys.exit(d)
+    return False
+
+def on_idle_wait_process(win):
+    global can_follow_size
+    can_follow_size = True
+    win.set_position(gtk.WIN_POS_CENTER_ALWAYS)
+    shape_combine_region(win)
+    return False
+
+class FindProcess(threading.Thread):
+
+    def __init__(self,widget,procname = 'nautilus'):
+        """ Function doc """
+        threading.Thread.__init__(self)
+        self._procname=procname
+        self._widget = widget
+
+    def run(self):
+#        wait_process()
+#        glib.idle_add(on_idle_wait_process,self._widget)
+        while not find_process(self._procname):
+            time.sleep(1.0)
+        glib.idle_add(on_idle_exit,0)
+
+class GreeterHelperWindow(gtk.Window):
+
+    def __init__(self):
+        self._pixmap,self._bitmap = bimg.render_pixmap_and_mask()
+        gtk.Window.__init__(self)
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_keep_above(True)
+        self.set_app_paintable(True)
+        self.connect("screen-changed",on_screen_changed)
+#        self.connect("size-allocate",on_size_allocate)
+        self.connect("destroy",gtk.main_quit)
+
+    def do_realize(self):
+        gtk.Window.do_realize(self)
+        self.window.set_back_pixmap(self._pixmap,False)
+        on_size_allocate(self,self.get_allocation())
+
+    def do_expose_event(self,event):
+        return on_expose_event(self,event)
+
+gobject.type_register(GreeterHelperWindow)
+
+def main():
+    glib.threads_init()
+    gtksettings_config()
+    gtk.gdk.get_default_root_window().set_cursor(gtk.gdk.Cursor(gtk.gdk.LEFT_PTR))
+    win = GreeterHelperWindow()
+    wait_process()
+    on_screen_changed(win,None)
+    win.show()
+    FindProcess(win).start()
+    gtk.main()
+
+def test_find_process():
+    print find_process(sys.argv[1])
+
+if __name__ == '__main__':
+    main()
+
+

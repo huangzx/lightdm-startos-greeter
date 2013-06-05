@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=Lightdm StartOS Greeter
+Comment=A LightDM greeter for StartOS 
+Exec=@BINDIR@/lightdm-startos-greeter
+Type=Application
